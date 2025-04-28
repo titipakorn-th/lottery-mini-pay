@@ -9,6 +9,7 @@ packages/*/.env
 .idea
 
 *.gitkeep
+*.git*
 
 # eclipse project file
 .settings/
