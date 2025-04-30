@@ -1,6 +1,6 @@
 import { useState } from "react";
 import StableTokenABI from "./cusd-abi.json";
-import MinipayNFTABI from "./minipay-nft.json";
+import LotteryFactoryABI from "./LotteryFactoryModule.json";
 import {
     createPublicClient,
     createWalletClient,
@@ -8,7 +8,6 @@ import {
     getContract,
     http,
     parseEther,
-    stringToHex,
 } from "viem";
 import { celoAlfajores } from "viem/chains";
 
@@ -18,7 +17,7 @@ const publicClient = createPublicClient({
 });
 
 const cUSDTokenAddress = "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1"; // Testnet
-const MINIPAY_NFT_CONTRACT = "0xE8F4699baba6C86DA9729b1B0a1DA1Bd4136eFeF"; // Testnet
+const LOTTERY_CONTRACT = "0x5EA095523C27F81564BD56cCE2466b2B77d157a9"; // Testnet
 
 export const useWeb3 = () => {
     const [address, setAddress] = useState<string | null>(null);
@@ -60,7 +59,105 @@ export const useWeb3 = () => {
         return receipt;
     };
 
-    const mintMinipayNFT = async () => {
+    // Lottery Functions
+    const buyLotteryTicket = async (roomId: number, number: number) => {
+        try {
+            let walletClient = createWalletClient({
+                transport: custom(window.ethereum),
+                chain: celoAlfajores,
+            });
+
+            let [address] = await walletClient.getAddresses();
+            console.log("User address:", address);
+
+            // Convert roomId to a number to ensure it's the right type
+            const safeRoomId = Number(roomId);
+            console.log(`Original roomId: ${roomId} (${typeof roomId}), converted: ${safeRoomId} (${typeof safeRoomId})`);
+
+            // Get the room details to determine entry fee
+            const lotteryContract = getContract({
+                abi: LotteryFactoryABI.abi,
+                address: LOTTERY_CONTRACT,
+                client: publicClient,
+            });
+            const roomDetails = await lotteryContract.read.getRoomDetails([safeRoomId]);
+            const entryFee = (roomDetails as any).entryFee;
+
+            const amountInWei = parseEther(entryFee.toString());
+
+            // Simulate the contract write before execution
+            const {request} = await publicClient.simulateContract({
+                address: LOTTERY_CONTRACT,
+                abi: LotteryFactoryABI.abi,
+                functionName: "buyTicket",
+                account: address,
+                args: [safeRoomId, number],
+                value: amountInWei,
+                gas: BigInt(300000), // Set a reasonable gas limit
+            });
+
+            // Create the transaction request with explicit gas configuration
+            const tx = await walletClient.writeContract({
+                ...request,
+                gas: BigInt(300000), // Set a reasonable gas limit
+            });
+
+            let receipt = await publicClient.waitForTransactionReceipt({
+                hash: tx,
+            });
+            
+            return receipt;
+        } catch (error) {
+            console.error("Error in buyLotteryTicket:", error);
+            throw error;
+        }
+    };
+
+    const getRoomDetails = async (roomId: number) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        const roomDetails = await lotteryContract.read.getRoomDetails([roomId]);
+        return roomDetails;
+    };
+
+    const getTicketsForAddress = async (roomId: number, playerAddress: string) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        const tickets = await lotteryContract.read.getTicketsForAddress([roomId, playerAddress]);
+        return tickets;
+    };
+
+    const getPrizePool = async (roomId: number) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        const prizePool = await lotteryContract.read.getPrizePool([roomId]);
+        return prizePool;
+    };
+
+    const getWinningNumber = async (roomId: number) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        const winningNumber = await lotteryContract.read.getWinningNumber([roomId]);
+        return winningNumber;
+    };
+
+    const claimPrize = async (roomId: number, ticketId: number) => {
         let walletClient = createWalletClient({
             transport: custom(window.ethereum),
             chain: celoAlfajores,
@@ -69,73 +166,54 @@ export const useWeb3 = () => {
         let [address] = await walletClient.getAddresses();
 
         const tx = await walletClient.writeContract({
-            address: MINIPAY_NFT_CONTRACT,
-            abi: MinipayNFTABI.abi,
-            functionName: "safeMint",
+            address: LOTTERY_CONTRACT,
+            abi: LotteryFactoryABI.abi,
+            functionName: "claimPrize",
             account: address,
-            args: [
-                address,
-                "https://cdn-production-opera-website.operacdn.com/staticfiles/assets/images/sections/2023/hero-top/products/minipay/minipay__desktop@2x.a17626ddb042.webp",
-            ],
+            args: [roomId, ticketId],
         });
 
-        const receipt = await publicClient.waitForTransactionReceipt({
+        let receipt = await publicClient.waitForTransactionReceipt({
             hash: tx,
         });
 
         return receipt;
     };
 
-    const getNFTs = async () => {
-        let walletClient = createWalletClient({
-            transport: custom(window.ethereum),
-            chain: celoAlfajores,
-        });
-
-        const minipayNFTContract = getContract({
-            abi: MinipayNFTABI.abi,
-            address: MINIPAY_NFT_CONTRACT,
+    const listActiveRooms = async () => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
             client: publicClient,
         });
 
-        const [address] = await walletClient.getAddresses();
-        const nfts: any = await minipayNFTContract.read.getNFTsByAddress([
-            address,
-        ]);
-
-        let tokenURIs: string[] = [];
-
-        for (let i = 0; i < nfts.length; i++) {
-            const tokenURI: string = (await minipayNFTContract.read.tokenURI([
-                nfts[i],
-            ])) as string;
-            tokenURIs.push(tokenURI);
-        }
-        return tokenURIs;
+        const activeRooms = await lotteryContract.read.listActiveRooms();
+        return activeRooms;
     };
 
-    const signTransaction = async () => {
-        let walletClient = createWalletClient({
-            transport: custom(window.ethereum),
-            chain: celoAlfajores,
+    const getCELOBalance = async (address: string) => {
+        if (!address) return "0";
+        
+        const balance = await publicClient.getBalance({
+            address: address as `0x${string}`,
         });
-
-        let [address] = await walletClient.getAddresses();
-
-        const res = await walletClient.signMessage({
-            account: address,
-            message: stringToHex("Hello from Celo Composer MiniPay Template!"),
-        });
-
-        return res;
+        
+        // Convert from wei to CELO
+        return (Number(balance) / 1e18).toString();
     };
 
     return {
         address,
         getUserAddress,
         sendCUSD,
-        mintMinipayNFT,
-        getNFTs,
-        signTransaction,
+        getCELOBalance,
+        // Lottery functions
+        buyLotteryTicket,
+        getRoomDetails,
+        getTicketsForAddress,
+        getPrizePool,
+        getWinningNumber,
+        claimPrize,
+        listActiveRooms,
     };
 };
