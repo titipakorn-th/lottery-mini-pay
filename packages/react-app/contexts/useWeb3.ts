@@ -18,7 +18,7 @@ const publicClient = createPublicClient({
 
 
 const cUSDTokenAddress = "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1"; // Testnet
-const LOTTERY_CONTRACT = "0x7BFedF7D49f058811E513e686Cf11F531204A78F"; // Testnet
+const LOTTERY_CONTRACT = "0xD2C9754D8db2E97C167EECD93Dd654349eB9e71C"; // Testnet
 
 export const useWeb3 = () => {
     const [address, setAddress] = useState<string | null>(null);
@@ -273,6 +273,30 @@ export const useWeb3 = () => {
         return playerCount;
     };
 
+    const isTicketClaimed = async (roomId: number, ticketId: number, roundNumber?: number) => {
+        try {
+            const lotteryContract = getContract({
+                abi: LotteryFactoryABI.abi,
+                address: LOTTERY_CONTRACT,
+                client: publicClient,
+            });
+            
+            // If roundNumber is not provided, get it from room details
+            let round = roundNumber;
+            if (round === undefined) {
+                const roomDetails = await lotteryContract.read.getRoomDetails([roomId]);
+                round = Number((roomDetails as any).roundNumber);
+            }
+            
+            // Call the isTicketClaimed function with all required parameters
+            const claimed = await lotteryContract.read.isTicketClaimed([roomId, round, ticketId]);
+            return claimed;
+        } catch (error) {
+            console.error("Error checking if ticket is claimed:", error);
+            return false;
+        }
+    };
+
     return {
         address,
         getUserAddress,
@@ -292,5 +316,6 @@ export const useWeb3 = () => {
         getTicketsForRound,
         updateRoomState,
         getPlayerCount,
+        isTicketClaimed,
     };
 };
