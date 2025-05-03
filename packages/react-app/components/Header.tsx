@@ -5,17 +5,20 @@ import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useConnect } from "wagmi";
 import { injected } from "wagmi/connectors";
+import { usePathname } from "next/navigation";
+import { withBasePath } from "@/utils/path";
 
 export default function Header() {
   const [hideConnectBtn, setHideConnectBtn] = useState(false);
   const { connect } = useConnect();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (window.ethereum && window.ethereum.isMiniPay) {
       setHideConnectBtn(true);
       connect({ connector: injected({ target: "metaMask" }) });
     }
-  }, []);
+  }, [connect]);
 
   return (
     <Disclosure as="nav" className="bg-colors-primary border-b border-black">
@@ -38,7 +41,7 @@ export default function Header() {
                 <div className="flex flex-shrink-0 items-center">
                   <Image
                     className="block h-8 w-auto sm:block lg:block"
-                    src="/logo.svg"
+                    src={withBasePath("/logo.svg")}
                     width="24"
                     height="24"
                     alt="Celo Logo"

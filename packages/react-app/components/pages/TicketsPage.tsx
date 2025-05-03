@@ -86,7 +86,7 @@ const TicketsPage = ({ tickets, address, onClaimPrize, highlightRoomId, clearHig
                     <div className="flex items-center justify-center h-40">
                         <div className="text-center">
                             <TicketIcon size={48} className="mx-auto mb-4 opacity-50" />
-                            <p className="text-gray-400">You haven't purchased any tickets yet.</p>
+                            <p className="text-gray-400">You haven&apos;t purchased any tickets yet.</p>
                         </div>
                     </div>
                 ) : (
