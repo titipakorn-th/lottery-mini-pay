@@ -1,24 +1,25 @@
 import { ethers } from "hardhat";
 import { expect } from "chai";
-import { Contract } from "ethers";
-import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("LotteryFactory Admin Functions", function () {
-  let lotteryFactory: Contract;
-  let owner: SignerWithAddress;
-  let addr1: SignerWithAddress;
-  let addr2: SignerWithAddress;
+  let lotteryFactory: any;
+  let mockCUSD: any;
+  let owner: HardhatEthersSigner;
+  let addr1: HardhatEthersSigner;
+  let addr2: HardhatEthersSigner;
 
   const encryptWinningNumber = (
     number: number,
     privateKey: string,
     roomId: number,
-    ownerAddress: string
+    ownerAddress: string,
+    roundNumber: number = 1
   ): string => {
     return ethers.keccak256(
       ethers.solidityPacked(
-        ["uint8", "bytes32", "uint256", "address"],
-        [number, privateKey, roomId, ownerAddress]
+        ["uint8", "bytes32", "uint256", "address", "uint256"],
+        [number, privateKey, roomId, ownerAddress, roundNumber]
       )
     );
   };
@@ -26,9 +27,24 @@ describe("LotteryFactory Admin Functions", function () {
   beforeEach(async function() {
     [owner, addr1, addr2] = await ethers.getSigners();
     
+    // Deploy mock cUSD token
+    const MockERC20 = await ethers.getContractFactory("MockERC20");
+    mockCUSD = await MockERC20.deploy("Celo USD", "cUSD", 18);
+    
+    // Mint tokens to test accounts
+    const amount = ethers.parseEther("1000");
+    await mockCUSD.mint(owner.address, amount);
+    await mockCUSD.mint(addr1.address, amount);
+    await mockCUSD.mint(addr2.address, amount);
+    
     // Deploy a fresh contract for each test
     const LotteryFactory = await ethers.getContractFactory("LotteryFactory");
-    lotteryFactory = await LotteryFactory.deploy();
+    lotteryFactory = await LotteryFactory.deploy(await mockCUSD.getAddress());
+    
+    // Approve token spending
+    await mockCUSD.approve(await lotteryFactory.getAddress(), ethers.parseEther("100"));
+    await mockCUSD.connect(addr1).approve(await lotteryFactory.getAddress(), ethers.parseEther("100"));
+    await mockCUSD.connect(addr2).approve(await lotteryFactory.getAddress(), ethers.parseEther("100"));
   });
 
   it("Should allow owner to pause and unpause", async function () {
@@ -42,10 +58,7 @@ describe("LotteryFactory Admin Functions", function () {
     const entryFee = ethers.parseEther("0.01");
     const drawTime = Math.floor(Date.now() / 1000) + 3600;
     
-    // ------------------------------------------------
-    // REPLACE this specific assertion with a try-catch
-    // instead of using expectation that checks for specific error
-    // ------------------------------------------------
+    // Attempt to create a room while paused should fail
     let succeeded = true;
     try {
       await lotteryFactory.createRoom(
@@ -53,7 +66,6 @@ describe("LotteryFactory Admin Functions", function () {
         "Test Description",
         entryFee,
         drawTime,
-        ethers.hexlify(ethers.randomBytes(32)),
         ethers.hexlify(ethers.randomBytes(32))
       );
     } catch (error) {
@@ -76,14 +88,32 @@ describe("LotteryFactory Admin Functions", function () {
         "Test Description",
         entryFee,
         drawTime,
-        ethers.hexlify(ethers.randomBytes(32)),
         ethers.hexlify(ethers.randomBytes(32))
       )
     ).to.not.be.reverted;
   });
 
-  it("Should allow emergency withdrawal", async function () {
-    // Create a room and buy tickets to generate some funds
+  it("Should allow emergency withdrawal of cUSD tokens", async function () {
+    // Send some tokens to the contract
+    const amount = ethers.parseEther("1");
+    await mockCUSD.transfer(await lotteryFactory.getAddress(), amount);
+    
+    const initialOwnerBalance = await mockCUSD.balanceOf(owner.address);
+    
+    // Perform emergency withdrawal
+    await lotteryFactory.emergencyWithdrawTokens(amount);
+    
+    // Check owner's balance increased
+    const newOwnerBalance = await mockCUSD.balanceOf(owner.address);
+    expect(newOwnerBalance).to.equal(initialOwnerBalance + amount);
+    
+    // Check contract balance
+    const newContractBalance = await mockCUSD.balanceOf(await lotteryFactory.getAddress());
+    expect(newContractBalance).to.equal(0);
+  });
+  
+  it("Should handle room reset by owner", async function() {
+    // Create a room
     const entryFee = ethers.parseEther("0.01");
     const drawTime = Math.floor(Date.now() / 1000) + 3600;
     const privateKey = ethers.hexlify(ethers.randomBytes(32));
@@ -101,34 +131,47 @@ describe("LotteryFactory Admin Functions", function () {
       "Test Description",
       entryFee,
       drawTime,
-      encryptedWinningNumber,
-      ethers.hexlify(ethers.randomBytes(32))
+      encryptedWinningNumber
     );
     
-    // Buy a ticket to send funds to the contract
-    await lotteryFactory.connect(addr1).buyTicket(0, 42, { value: entryFee });
+    // Reveal winning number after time passes
+    await ethers.provider.send("evm_increaseTime", [3700]);
+    await ethers.provider.send("evm_mine", []);
     
-    // Get contract balance
-    const contractBalance = await ethers.provider.getBalance(await lotteryFactory.getAddress());
-    expect(contractBalance).to.be.gt(0); // Verify contract has funds
+    await lotteryFactory.revealWinningNumber(0, privateKey, winningNumber);
     
-    // Record owner's initial balance
-    const initialOwnerBalance = await ethers.provider.getBalance(owner.address);
+    // Reset the room
+    const newDrawTime = Math.floor(Date.now() / 1000) + 7200;
+    const newPrivateKey = ethers.hexlify(ethers.randomBytes(32));
+    const newWinningNumber = 77;
     
-    // Perform emergency withdrawal
-    const tx = await lotteryFactory.emergencyWithdraw(contractBalance);
-    const receipt = await tx.wait();
-    const gasUsed = receipt.gasUsed * receipt.gasPrice;
-    
-    // Check owner's balance increased
-    const newOwnerBalance = await ethers.provider.getBalance(owner.address);
-    expect(newOwnerBalance).to.be.closeTo(
-      initialOwnerBalance + contractBalance - gasUsed,
-      ethers.parseEther("0.0001")
+    const newEncryptedWinningNumber = encryptWinningNumber(
+      newWinningNumber,
+      newPrivateKey,
+      0, // roomId
+      owner.address,
+      2 // round 2
     );
     
-    // Check contract balance is now 0
-    const newContractBalance = await ethers.provider.getBalance(await lotteryFactory.getAddress());
-    expect(newContractBalance).to.equal(0);
+    await lotteryFactory.resetRoom(
+      0,
+      newDrawTime,
+      newEncryptedWinningNumber
+    );
+    
+    // Check room details
+    const room = await lotteryFactory.getRoomDetails(0);
+    expect(room.roundNumber).to.equal(2);
+    expect(room.state).to.equal(0); // OPEN
+    expect(room.revealed).to.be.false;
+    
+    // Non-owner should not be able to reset
+    await expect(
+      lotteryFactory.connect(addr1).resetRoom(
+        0,
+        newDrawTime,
+        ethers.hexlify(ethers.randomBytes(32))
+      )
+    ).to.be.revertedWithCustomError(lotteryFactory, "InvalidOwner");
   });
 });
