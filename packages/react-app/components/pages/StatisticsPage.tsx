@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Ticket, Room } from "../lottery/types";
 import { Ticket as TicketIcon, Bell, ChevronLeft, Home, Award, DollarSign, Clock, Users, Star, BarChart, PieChart, TrendingUp, CircleDollarSign, Zap } from 'lucide-react';
+import { useWeb3 } from "@/contexts/useWeb3";
 
 interface StatisticsPageProps {
     tickets: Ticket[];
@@ -11,25 +12,78 @@ interface StatisticsPageProps {
 }
 
 const StatisticsPage = ({ tickets, rooms, address }: StatisticsPageProps) => {
-    // Calculate user statistics from tickets
+    const { getPlayerCompleteStats, getTotalPlayerWins, getTotalPlayerTickets } = useWeb3();
+    const [statsLoading, setStatsLoading] = useState(true);
+    const [playerStats, setPlayerStats] = useState({
+        totalTickets: 0,
+        totalWins: 0,
+        totalClaimed: 0
+    });
     
-    // Total tickets purchased
-    const totalTickets = tickets.length;
+    // Fetch player stats from blockchain
+    useEffect(() => {
+        async function fetchPlayerStats() {
+            if (!address) return;
+            
+            try {
+                setStatsLoading(true);
+                // Get player stats from smart contract
+                const completeStats = await getPlayerCompleteStats(address);
+                
+                // Type assertion to handle unknown type
+                const statsArray = completeStats as unknown as bigint[];
+                
+                setPlayerStats({
+                    totalTickets: Number(statsArray[0]) || 0,
+                    totalWins: Number(statsArray[1]) || 0,
+                    totalClaimed: Number(statsArray[2]) || 0
+                });
+            } catch (error) {
+                console.error("Error fetching player stats:", error);
+                // Fall back to tickets data if contract call fails
+                fallbackToTicketsData();
+            } finally {
+                setStatsLoading(false);
+            }
+        }
+        
+        fetchPlayerStats();
+    }, [address]); // Remove getPlayerCompleteStats from dependencies
     
-    // Winning tickets
-    const winningTickets = tickets.filter(ticket => ticket.status === 'won');
-    const totalWins = winningTickets.length;
+    // Fallback function to calculate stats from tickets if contract call fails
+    const fallbackToTicketsData = () => {
+        // Total tickets purchased
+        const totalTickets = tickets.length;
+        
+        // Winning tickets
+        const winningTickets = tickets.filter(ticket => ticket.win === true || ticket.status === 'won');
+        const totalWins = winningTickets.length;
+        
+        // Claimed prizes
+        const claimedTickets = winningTickets.filter(ticket => ticket.claimed);
+        const totalClaimed = claimedTickets.length;
+        
+        setPlayerStats({
+            totalTickets,
+            totalWins,
+            totalClaimed
+        });
+    };
     
-    // Losing tickets
-    const losingTickets = tickets.filter(ticket => ticket.status === 'lost');
+    // Calculate derived stats
+    
+    // Winning tickets from frontend tickets data (for UI display)
+    const winningTickets = tickets.filter(ticket => ticket.win === true || ticket.status === 'won');
+    
+    // Losing tickets 
+    const losingTickets = tickets.filter(ticket => (ticket.status === 'lost' || (ticket.roomState === 2 || ticket.roomState === 3) && !ticket.win));
     const totalLosses = losingTickets.length;
     
     // Pending tickets
     const pendingTickets = tickets.filter(ticket => ticket.status === 'pending');
     
     // Win rate
-    const resolvedTickets = totalWins + totalLosses;
-    const winRate = resolvedTickets > 0 ? (totalWins / resolvedTickets) * 100 : 0;
+    const winRate = playerStats.totalTickets > 0 ? (playerStats.totalWins / playerStats.totalTickets) * 100 : 0;
     
     // Total spent
     const totalSpent = tickets.reduce((total, ticket) => {
@@ -81,12 +135,12 @@ const StatisticsPage = ({ tickets, rooms, address }: StatisticsPageProps) => {
                         <div className="bg-gray-700/50 p-3 rounded flex flex-col items-center">
                             <TicketIcon size={24} className="text-purple-400 mb-1" />
                             <p className="text-xs text-gray-300">Total Tickets</p>
-                            <p className="text-xl font-bold">{totalTickets}</p>
+                            <p className="text-xl font-bold">{statsLoading ? "..." : playerStats.totalTickets}</p>
                         </div>
                         <div className="bg-gray-700/50 p-3 rounded flex flex-col items-center">
                             <Zap size={24} className="text-yellow-400 mb-1" />
                             <p className="text-xs text-gray-300">Win Rate</p>
-                            <p className="text-xl font-bold">{winRate.toFixed(1)}%</p>
+                            <p className="text-xl font-bold">{statsLoading ? "..." : winRate.toFixed(1)}%</p>
                         </div>
                         <div className="bg-gray-700/50 p-3 rounded flex flex-col items-center">
                             <CircleDollarSign size={24} className="text-red-400 mb-1" />
@@ -96,59 +150,32 @@ const StatisticsPage = ({ tickets, rooms, address }: StatisticsPageProps) => {
                         <div className="bg-gray-700/50 p-3 rounded flex flex-col items-center">
                             <Award size={24} className="text-green-400 mb-1" />
                             <p className="text-xs text-gray-300">Wins</p>
-                            <p className="text-xl font-bold">{totalWins}</p>
+                            <p className="text-xl font-bold">{statsLoading ? "..." : playerStats.totalWins}</p>
                         </div>
                     </div>
                 </div>
                 
-                {/* Ticket Status Breakdown */}
+                {/* Player Achievement Stats */}
                 <div className="bg-gray-800 rounded-lg p-4 mb-4">
-                    <h2 className="text-xl font-bold mb-3">Ticket Status</h2>
-                    <div className="flex items-center mb-2">
-                        <div className="w-full bg-gray-700 rounded-full h-4 mr-2">
-                            <div className="flex h-4 rounded-full overflow-hidden">
-                                {totalWins > 0 && (
-                                    <div 
-                                        className="bg-green-500" 
-                                        style={{ width: `${(totalWins / totalTickets) * 100}%` }}
-                                    ></div>
-                                )}
-                                {totalLosses > 0 && (
-                                    <div 
-                                        className="bg-red-500" 
-                                        style={{ width: `${(totalLosses / totalTickets) * 100}%` }}
-                                    ></div>
-                                )}
-                                {pendingTickets.length > 0 && (
-                                    <div 
-                                        className="bg-yellow-500" 
-                                        style={{ width: `${(pendingTickets.length / totalTickets) * 100}%` }}
-                                    ></div>
-                                )}
+                    <h2 className="text-xl font-bold mb-3">Achievements</h2>
+                    <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                                <Award className="text-yellow-500 mr-2" size={18} />
+                                <span>Total Prizes Claimed</span>
                             </div>
+                            <span className="font-bold">{statsLoading ? "..." : playerStats.totalClaimed}</span>
                         </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-1 text-center">
-                        <div>
-                            <p className="flex items-center justify-center text-green-500">
-                                <span className="inline-block w-3 h-3 rounded-full bg-green-500 mr-1"></span>
-                                Won
-                            </p>
-                            <p className="font-bold">{totalWins}</p>
-                        </div>
-                        <div>
-                            <p className="flex items-center justify-center text-red-500">
-                                <span className="inline-block w-3 h-3 rounded-full bg-red-500 mr-1"></span>
-                                Lost
-                            </p>
-                            <p className="font-bold">{totalLosses}</p>
-                        </div>
-                        <div>
-                            <p className="flex items-center justify-center text-yellow-500">
-                                <span className="inline-block w-3 h-3 rounded-full bg-yellow-500 mr-1"></span>
-                                Pending
-                            </p>
-                            <p className="font-bold">{pendingTickets.length}</p>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                                <TrendingUp className="text-green-500 mr-2" size={18} />
+                                <span>Claiming Rate</span>
+                            </div>
+                            <span className="font-bold">
+                                {statsLoading || playerStats.totalWins === 0 
+                                    ? "N/A" 
+                                    : `${((playerStats.totalClaimed / playerStats.totalWins) * 100).toFixed(1)}%`}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -157,7 +184,7 @@ const StatisticsPage = ({ tickets, rooms, address }: StatisticsPageProps) => {
                 <div className="bg-gray-800 rounded-lg p-4 mb-4">
                     <h2 className="text-xl font-bold mb-3">Additional Stats</h2>
                     
-                    {totalTickets > 0 ? (
+                    {tickets.length > 0 ? (
                         <div className="space-y-4">
                             {mostPlayedRoom && (
                                 <div>

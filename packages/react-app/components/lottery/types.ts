@@ -34,4 +34,5 @@ export type Ticket = {
     winningNumber: number;
     roundNumber: number;
     claimed?: boolean;
+    win?: boolean;
 }; 

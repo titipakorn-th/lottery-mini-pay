@@ -2,7 +2,8 @@
 
 import React, { useEffect } from "react";
 import { Room, RoomState } from "../lottery/types";
-import { DollarSign, Users, Clock } from "lucide-react";
+import { Users, Clock } from "lucide-react";
+import Image from "next/image";
 
 interface BuyTicketPageProps {
     roomInfo: Room | undefined;
@@ -103,8 +104,15 @@ const BuyTicketPage = ({ roomInfo, selectedNumber, setSelectedNumber, buyTicket,
                     >
                         <span>Rooms</span>
                     </button>
-                    <div className="bg-purple-900 px-3 py-1 rounded-full text-sm">
-                        ${roomInfo.fee} Entry
+                    <div className="bg-purple-900 px-3 py-1 rounded-full text-sm flex items-center">
+                        <Image 
+                            src="/usd-coin-usdc-logo.svg" 
+                            alt="USDC" 
+                            width={14} 
+                            height={14} 
+                            className="mr-1" 
+                        />
+                        {roomInfo.fee} USDC
                     </div>
                 </div>
             </div>
@@ -122,8 +130,14 @@ const BuyTicketPage = ({ roomInfo, selectedNumber, setSelectedNumber, buyTicket,
                         <div className="bg-gray-700/50 p-2 rounded">
                             <p className="text-gray-400 text-xs">Prize Pool</p>
                             <p className="text-lg font-bold flex items-center">
-                                <DollarSign size={14} className="text-green-400 mr-1" />
-                                {roomInfo.prizePool}
+                                <Image 
+                                    src="/usd-coin-usdc-logo.svg" 
+                                    alt="USDC" 
+                                    width={14} 
+                                    height={14} 
+                                    className="mr-1" 
+                                />
+                                {roomInfo.prizePool} USDC
                             </p>
                         </div>
                         <div className="bg-gray-700/50 p-2 rounded">
@@ -164,7 +178,7 @@ const BuyTicketPage = ({ roomInfo, selectedNumber, setSelectedNumber, buyTicket,
                         disabled={selectedNumber === null}
                         onClick={buyTicket}
                     >
-                        Buy Ticket for ${roomInfo.fee}
+                        Buy Ticket for {roomInfo.fee} USDC
                     </button>
                 </div>
             </div>

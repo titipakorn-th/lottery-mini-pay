@@ -5,6 +5,10 @@ import { useWeb3 } from "@/contexts/useWeb3";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { ChevronLeft, Home, Ticket, BarChart } from 'lucide-react';
 
+// Constants
+const DECIMAL_PLACES = 6; // Can be changed to any value (e.g., 18 for ETH, 6 for USDC)
+const DECIMAL_FACTOR = 10 ** DECIMAL_PLACES;
+
 // Import types and components
 import { Room, RoomState, Ticket as TicketType } from "@/components/lottery/types";
 import { formatCountdown } from "@/components/lottery/utils";
@@ -29,6 +33,10 @@ const LotteryApp = () => {
         getPlayerCount,
         getTicketsForRound,
         isTicketClaimed,
+        getTotalPlayerWins,
+        getTotalPlayerTickets,
+        getPlayerRoomStats,
+        getPlayerCompleteStats,
     } = useWeb3();
 
     const [currentPage, setCurrentPage] = useState<'home' | 'tickets' | 'statistics' | 'buy-ticket'>('home');
@@ -243,7 +251,7 @@ const LotteryApp = () => {
                         
                         // Find existing room data to preserve prize pool if state has changed
                         const existingRoom = rooms.find(r => r.id === Number(roomId));
-                        const prizePool = Number(details.prizePool) / 1e18;  // Convert from wei
+                        const prizePool = Number(details.prizePool) / DECIMAL_FACTOR;  // Convert from wei
                         
                         // Convert from blockchain format to UI format
                         return {
@@ -254,11 +262,11 @@ const LotteryApp = () => {
                             players: playerCount,
                             countdown: formatCountdown(Number(details.drawTime)),
                             drawTime: Number(details.drawTime), // Store the actual timestamp
-                            fee: Number(details.entryFee) / 1e18, // Convert from wei
+                            fee: Number(details.entryFee) / DECIMAL_FACTOR, // Convert from wei
                             description: details.description,
                             roundNumber: Number(details.roundNumber || 0), // Ensure we convert to Number and provide default
                             state: Number(details.state),
-                            carryOverAmount: Number(details.carryOverAmount) / 1e18,
+                            carryOverAmount: Number(details.carryOverAmount) / DECIMAL_FACTOR,
                             winningNumber: Number(details.winningNumber)
                         };
                     })
@@ -311,17 +319,12 @@ const LotteryApp = () => {
                             const ticketData = ticket as any;
                             const ticketRoundNumber = Number(ticketData.roundNumber || 0);
                             
-                            // Check if the ticket is a winning ticket
-                            const winningNumberAvailable = winningNumber > 0;
-                            const isWinningTicket = winningNumberAvailable && Number(ticketData.number) === winningNumber;
-                            const isCurrentRound = ticketRoundNumber === room.roundNumber;
-                            
                             // Check if the ticket is claimed using the contract function
                             let isClaimed = false;
                             try {
-                                // Only check claimed status for winning tickets
-                                if (isWinningTicket) {
-                                    isClaimed = Boolean(await isTicketClaimed(room.id, Number(ticketData.id), ticketRoundNumber));
+                                // Only check claimed status for winning tickets based on win attribute
+                                if (ticketData.win) {
+                                    isClaimed = Boolean(await isTicketClaimed(room.id, ticketRoundNumber, Number(ticketData.id)));
                                     console.log(`Ticket ${ticketData.id} in room ${room.id} claimed status:`, isClaimed);
                                 }
                             } catch (error) {
@@ -330,14 +333,14 @@ const LotteryApp = () => {
                                 isClaimed = false;
                             }
                             
-                            // Determine ticket status based on room state and winning information
+                            // Determine ticket status based on win attribute and room state
                             let status: 'won' | 'lost' | 'pending' = 'pending';
                             
-                            // First check if it's a winning ticket regardless of claim status
-                            if (isWinningTicket) {
+                            // Use the win attribute from the contract
+                            if (ticketData.win) {
                                 status = 'won'; // Always show winning tickets as 'won' even if not claimed yet
-                            } else if (!isCurrentRound || roomState === RoomState.REVEALED || roomState === RoomState.CLOSED) {
-                                // Non-winning tickets in resolved rounds are clearly 'lost'
+                            } else if (roomState === RoomState.REVEALED || roomState === RoomState.CLOSED) {
+                                // Non-winning tickets in resolved rounds are 'lost'
                                 status = 'lost';
                             } else {
                                 // Current round still pending
@@ -356,11 +359,12 @@ const LotteryApp = () => {
                                 }),
                                 status: status,
                                 // Always set prize to the pool amount for winning tickets regardless of claimed status
-                                prize: Number(roomDetails.prizePool) / 1e18,
+                                prize: Number(roomDetails.prizePool) / DECIMAL_FACTOR,
                                 roomState: roomState,
                                 winningNumber: winningNumber,
                                 roundNumber: ticketRoundNumber,
-                                claimed: isClaimed // Use the value from isTicketClaimed function
+                                claimed: isClaimed, // Use the value from isTicketClaimed function
+                                win: Boolean(ticketData.win) // Add win property from contract data
                             });
                         }
                     }
@@ -392,9 +396,9 @@ const LotteryApp = () => {
             try {
                 // Find the ticket to get its round number
                 const ticket = tickets.find(t => t.id === ticketId && t.roomId === roomId);
-                const roundNumber = ticket ? ticket.roundNumber : undefined;
+                const roundNumber = ticket ? ticket.roundNumber : 1; // Default to round 1 if undefined
                 
-                isClaimed = Boolean(await isTicketClaimed(roomId, ticketId, roundNumber));
+                isClaimed = Boolean(await isTicketClaimed(roomId, roundNumber, ticketId));
             } catch (claimCheckError) {
                 console.error("Error checking ticket claimed status:", claimCheckError);
                 // If we can't check, assume it worked since the claim transaction succeeded

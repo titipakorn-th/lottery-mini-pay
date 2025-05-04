@@ -3,6 +3,7 @@
 import React from "react";
 import { Room, RoomState } from "../lottery/types";
 import { DollarSign, Users, Clock, Star } from "lucide-react";
+import Image from "next/image";
 
 interface HomePageProps {
     rooms: Room[];
@@ -134,8 +135,15 @@ const HomePage = ({
                                     )}
                                     <div className="flex justify-between items-center mb-2">
                                         <h3 className="text-xl font-semibold">{room.name}</h3>
-                                        <div className="bg-purple-900 px-3 py-1 rounded-full text-sm">
-                                            ${room.fee}
+                                        <div className="bg-purple-900 px-3 py-1 rounded-full text-sm flex items-center">
+                                            <Image 
+                                                src="/usd-coin-usdc-logo.svg" 
+                                                alt="USDC" 
+                                                width={14} 
+                                                height={14} 
+                                                className="mr-1" 
+                                            />
+                                            {room.fee} USDC
                                         </div>
                                     </div>
                                     <p className="text-gray-400 text-sm mb-2">{room.description}</p>
@@ -149,8 +157,14 @@ const HomePage = ({
                                     </div>
                                     <div className="grid grid-cols-3 gap-2 mt-3 text-sm">
                                         <div className="flex items-center">
-                                            <DollarSign size={16} className="text-green-400 mr-1 flex-shrink-0" />
-                                            <span className="truncate">Prize: ${room.prizePool}</span>
+                                            <Image 
+                                                src="/usd-coin-usdc-logo.svg" 
+                                                alt="USDC" 
+                                                width={16} 
+                                                height={16} 
+                                                className="mr-1 flex-shrink-0" 
+                                            />
+                                            <span className="truncate">Prize: {room.prizePool} USDC</span>
                                         </div>
                                         <div className="flex items-center justify-center">
                                             <Users size={16} className="text-blue-400 mr-1 flex-shrink-0" />

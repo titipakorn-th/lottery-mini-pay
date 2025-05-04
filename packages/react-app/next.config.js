@@ -10,7 +10,7 @@ const nextConfig = {
     return config;
   },
   images: {
-    domains: ['cdn-production-opera-website.operacdn.com'],
+    domains: ['cdn-production-opera-website.operacdn.com','22d5-240b-c010-4a4-d8a9-68e2-83b2-38b8-e125.ngrok-free.app'],
   },
   // Make environment variables available to the browser
   env: {

@@ -34,19 +34,32 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         uint256 revealTime;      // Timestamp when the winning number was revealed
     }
     
-    // Ticket structure (without claimed field as we'll use a bitmap for that)
+    // Ticket structure (with win field to track if the ticket was a winner)
     struct Ticket {
         uint256 id;
         uint256 roomId;
         address player;
         uint8 number;
         uint256 roundNumber;     // Track which round this ticket belongs to
+        bool win;                // Track if this ticket was a winner
+    }
+    
+    // Player statistics structure
+    struct PlayerStats {
+        uint256 totalTickets;     // Total tickets purchased across all rooms
+        uint256 totalWins;        // Total winning tickets across all rooms
+        uint256 totalClaimed;     // Total prizes claimed
+        mapping(uint256 => uint256) roomTickets; // roomId => ticket count for that room
+        mapping(uint256 => uint256) roomWins;    // roomId => win count for that room
     }
     
     // Mappings and arrays
     mapping(uint256 => Room) public rooms;
     mapping(uint256 => mapping(address => uint256[])) public playerTicketIds; // roomId => player => ticketIds
     mapping(uint256 => mapping(uint256 => Ticket[])) public roomTicketsByRound; // roomId => roundNumber => tickets
+    
+    // Player statistics tracking
+    mapping(address => PlayerStats) private playerStats;
     
     // Bitmap for claimed status - single source of truth for claimed status
     mapping(uint256 => mapping(uint256 => mapping(uint256 => bool))) public ticketClaimed; // roomId => roundNumber => ticketId => claimed
@@ -63,6 +76,7 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
     event PrizeCarriedOver(uint256 indexed fromRoomId, uint256 indexed toRoomId, uint256 amount);
     event RoomReset(uint256 indexed roomId, uint256 newRoundNumber, uint256 newDrawTime);
     event FeesWithdrawn(address indexed owner, uint256 amount);
+    event TicketWinStatusUpdated(uint256 indexed roomId, uint256 indexed ticketId, bool win, uint256 roundNumber);
     
     // Platform fee percentage (10%)
     uint256 public constant PLATFORM_FEE = 10; // 10% represented as 10/100
@@ -70,10 +84,13 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
     // Grace period for force closing rooms (a day)
     uint256 public constant GRACE_PERIOD = 1 days;
     
+    // Decimal conversion constant (10^12) for converting between 18 decimals (cUSD) and 6 decimals (USDC)
+    uint256 public constant DECIMAL_CONVERSION = 1e12;
+    
     uint256 public collectedFees;
     
-    // cUSD token
-    IERC20 public cUSDToken;
+    // USDC token
+    IERC20 public USDCToken;
     
     // Custom errors
     error InvalidRoom();
@@ -93,10 +110,10 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
 
     /**
      * @dev Initializes the contract setting the deployer as the initial owner
-     * @param _cUSDToken Address of the cUSD token
+     * @param _USDCToken Address of the USDC token
      */
-    constructor(address _cUSDToken) Ownable(msg.sender) {
-        cUSDToken = IERC20(_cUSDToken);
+    constructor(address _USDCToken) Ownable(msg.sender) {
+        USDCToken = IERC20(_USDCToken);
     }
     
     /**
@@ -112,7 +129,7 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
      * @dev Creates a new lottery room
      * @param name Room name
      * @param description Room description
-     * @param entryFee Cost to purchase a ticket
+     * @param entryFee Cost to purchase a ticket (in 18 decimal format, will be converted to 6 decimals for USDC)
      * @param drawTime Timestamp when winning number will be revealed
      * @param encryptedWinningNumber Encrypted winning number (0-99)
      */
@@ -126,11 +143,15 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         // ONLY validate entry fee for tests - remove timestamp validation
         if (entryFee == 0) revert InvalidAmount();
         
+        // Convert entry fee from 18 decimals to 6 decimals for USDC
+        uint256 adjustedEntryFee = entryFee / DECIMAL_CONVERSION;
+        if (adjustedEntryFee == 0) revert InvalidAmount();
+        
         uint256 roomId = roomCount;
         rooms[roomId].id = roomId;
         rooms[roomId].name = name;
         rooms[roomId].description = description;
-        rooms[roomId].entryFee = entryFee;
+        rooms[roomId].entryFee = adjustedEntryFee; // Store the USDC-adjusted fee (6 decimals)
         rooms[roomId].drawTime = drawTime;
         rooms[roomId].prizePool = 0;
         rooms[roomId].encryptedWinningNumber = encryptedWinningNumber;
@@ -143,7 +164,7 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         
         activeRoomIds.push(roomId);
         
-        emit RoomCreated(roomId, name, entryFee, drawTime, msg.sender);
+        emit RoomCreated(roomId, name, adjustedEntryFee, drawTime, msg.sender);
         
         roomCount += 1; // Increment after creation to ensure index 0 is valid
     }
@@ -228,12 +249,12 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         // Make sure we can buy tickets
         if (number > 99) revert InvalidNumber();
         
-        // Check if user has approved enough tokens
-        if (cUSDToken.allowance(msg.sender, address(this)) < room.entryFee) 
+        // Check if user has approved enough tokens (using 6 decimal USDC amount)
+        if (USDCToken.allowance(msg.sender, address(this)) < room.entryFee) 
             revert InsufficientAllowance();
         
         // Transfer tokens from user to contract
-        bool transferSuccess = cUSDToken.transferFrom(msg.sender, address(this), room.entryFee);
+        bool transferSuccess = USDCToken.transferFrom(msg.sender, address(this), room.entryFee);
         if (!transferSuccess) revert TransferFailed();
         
         // Add the full entry fee to the prize pool (fee is deducted at distribution time)
@@ -247,7 +268,8 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
             roomId: roomId,
             player: msg.sender,
             number: number,
-            roundNumber: room.roundNumber
+            roundNumber: room.roundNumber,
+            win: false // Initialize win status as false
         });
         
         // Store ticket in room tickets
@@ -261,6 +283,10 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         
         // Update room data
         room.prizePool += prizeAmount;
+        
+        // Update player statistics
+        playerStats[msg.sender].totalTickets += 1;
+        playerStats[msg.sender].roomTickets[roomId] += 1;
         
         emit TicketPurchased(roomId, msg.sender, number, ticketId, room.roundNumber);
     }
@@ -315,6 +341,21 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         room.revealed = true;
         room.state = RoomState.REVEALED;
         room.revealTime = block.timestamp;
+        
+        // Update win status for all tickets in this round
+        Ticket[] storage tickets = roomTicketsByRound[roomId][room.roundNumber];
+        for (uint256 i = 0; i < tickets.length; i++) {
+            if (tickets[i].number == winningNumber) {
+                tickets[i].win = true;
+                
+                // Update player statistics for the win
+                address player = tickets[i].player;
+                playerStats[player].totalWins += 1;
+                playerStats[player].roomWins[roomId] += 1;
+                
+                emit TicketWinStatusUpdated(roomId, i, true, room.roundNumber);
+            }
+        }
         
         emit WinningNumberRevealed(roomId, winningNumber, room.roundNumber);
         emit RoomStateUpdated(roomId, RoomState.REVEALED, room.roundNumber);
@@ -412,6 +453,9 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         // Mark ticket as claimed BEFORE transferring funds (prevents reentrancy)
         ticketClaimed[roomId][room.roundNumber][ticketId] = true;
         
+        // Update player statistics for claim
+        playerStats[msg.sender].totalClaimed += 1;
+        
         // Calculate prize amount
         // Count total winning tickets for current round
         uint256 winningTicketCount = 0;
@@ -439,8 +483,8 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
             // Calculate individual prize amount from adjusted prize pool
             prizeAmount = adjustedPrizePool / winningTicketCount;
             
-            // Transfer prize to winner
-            bool success = cUSDToken.transfer(msg.sender, prizeAmount);
+            // Transfer prize to winner (already in 6 decimal USDC format)
+            bool success = USDCToken.transfer(msg.sender, prizeAmount);
             if (!success) revert TransferFailed();
             
             emit PrizeClaimed(roomId, msg.sender, prizeAmount, ticketId, room.roundNumber);
@@ -542,7 +586,7 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
     
     /**
      * @dev Withdraw collected fees to owner
-     * @param amount Amount to withdraw, use 0 to withdraw all collected fees
+     * @param amount Amount to withdraw, use 0 to withdraw all collected fees (in 6 decimal USDC format)
      */
     function withdrawFees(uint256 amount) external onlyOwner nonReentrant {
         uint256 withdrawAmount = amount;
@@ -558,8 +602,8 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
         // Update collected fees
         collectedFees -= withdrawAmount;
         
-        // Transfer to owner
-        bool success = cUSDToken.transfer(owner(), withdrawAmount);
+        // Transfer to owner (already in 6 decimal USDC format)
+        bool success = USDCToken.transfer(owner(), withdrawAmount);
         if (!success) revert TransferFailed();
         
         emit FeesWithdrawn(owner(), withdrawAmount);
@@ -568,12 +612,12 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
     /**
      * @dev Emergency withdrawal in case of tokens stuck in contract
      * Only owner can call
-     * @param amount Amount to withdraw
+     * @param amount Amount to withdraw (in 6 decimal USDC format)
      */
     function emergencyWithdrawTokens(uint256 amount) external onlyOwner {
-        if (amount > cUSDToken.balanceOf(address(this))) revert InvalidAmount();
+        if (amount > USDCToken.balanceOf(address(this))) revert InvalidAmount();
         
-        bool success = cUSDToken.transfer(owner(), amount);
+        bool success = USDCToken.transfer(owner(), amount);
         if (!success) revert TransferFailed();
     }
     
@@ -627,6 +671,68 @@ contract LotteryFactory is Ownable, ReentrancyGuard, Pausable {
      */
     function getCurrentRoundPlayerCount(uint256 roomId) external view validRoom(roomId) returns (uint256) {
         return getPlayerCount(roomId, rooms[roomId].roundNumber);
+    }
+    
+    /**
+     * @dev Get the player's win rate in a specific room
+     * @param roomId ID of the room
+     * @param player Address of the player
+     * @return Player's win rate as a percentage (0-100)
+     */
+    function getPlayerWinRate(uint256 roomId, address player) external view validRoom(roomId) returns (uint256) {
+        uint256 ticketsInRoom = playerStats[player].roomTickets[roomId];
+        uint256 winsInRoom = playerStats[player].roomWins[roomId];
+        
+        if (ticketsInRoom == 0) return 0;
+        return (winsInRoom * 100) / ticketsInRoom;
+    }
+    
+    /**
+     * @dev Get the total number of winning tickets for a player across all rooms
+     * @param player Address of the player
+     * @return Total number of winning tickets for the player
+     */
+    function getTotalPlayerWins(address player) external view returns (uint256) {
+        return playerStats[player].totalWins;
+    }
+    
+    /**
+     * @dev Get the total number of tickets purchased by a player across all rooms
+     * @param player Address of the player
+     * @return Total tickets purchased
+     */
+    function getTotalPlayerTickets(address player) external view returns (uint256) {
+        return playerStats[player].totalTickets;
+    }
+    
+    /**
+     * @dev Get a player's tickets and wins for a specific room
+     * @param roomId ID of the room
+     * @param player Address of the player
+     * @return tickets Total tickets purchased in the room
+     * @return wins Total wins in the room
+     */
+    function getPlayerRoomStats(uint256 roomId, address player) external view validRoom(roomId) returns (uint256 tickets, uint256 wins) {
+        return (playerStats[player].roomTickets[roomId], playerStats[player].roomWins[roomId]);
+    }
+    
+    /**
+     * @dev Get comprehensive player statistics
+     * @param player Address of the player
+     * @return totalTickets Total tickets purchased across all rooms
+     * @return totalWins Total wins across all rooms
+     * @return totalClaimed Total prizes claimed
+     */
+    function getPlayerCompleteStats(address player) external view returns (
+        uint256 totalTickets,
+        uint256 totalWins,
+        uint256 totalClaimed
+    ) {
+        return (
+            playerStats[player].totalTickets,
+            playerStats[player].totalWins,
+            playerStats[player].totalClaimed
+        );
     }
     
     /**

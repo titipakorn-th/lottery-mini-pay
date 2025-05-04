@@ -11,14 +11,18 @@ import {
 } from "viem";
 import { celoAlfajores } from "viem/chains";
 
+// Constants
+const DECIMAL_PLACES = 6; // Can be changed to any value (e.g., 18 for ETH, 6 for USDC)
+const DECIMAL_FACTOR = 10 ** DECIMAL_PLACES;
+
 const publicClient = createPublicClient({
     chain: celoAlfajores,
     transport: http(),
 });
 
-
-const cUSDTokenAddress = "0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1"; // Testnet
-const LOTTERY_CONTRACT = "0xD2C9754D8db2E97C167EECD93Dd654349eB9e71C"; // Testnet
+const USDCTokenAddress = "0x2F25deB3848C207fc8E0c34035B3Ba7fC157602B";  // Testnet
+const USDCAdapterAddress = "0x4822e58de6f5e485eF90df51C41CE01721331dC0"; // Testnet
+const LOTTERY_CONTRACT = "0x397A9661702496870ed2002fD0686B5240C05e10"; // Testnet
 
 export const useWeb3 = () => {
     const [address, setAddress] = useState<string | null>(null);
@@ -35,30 +39,6 @@ export const useWeb3 = () => {
         }
     };
 
-    const sendCUSD = async (to: string, amount: string) => {
-        let walletClient = createWalletClient({
-            transport: custom(window.ethereum),
-            chain: celoAlfajores,
-        });
-
-        let [address] = await walletClient.getAddresses();
-
-        const amountInWei = parseEther(amount);
-
-        const tx = await walletClient.writeContract({
-            address: cUSDTokenAddress,
-            abi: StableTokenABI.abi,
-            functionName: "transfer",
-            account: address,
-            args: [to, amountInWei],
-        });
-
-        let receipt = await publicClient.waitForTransactionReceipt({
-            hash: tx,
-        });
-
-        return receipt;
-    };
 
     // Lottery Functions
     const buyLotteryTicket = async (roomId: number, number: number, fee: number) => {
@@ -72,27 +52,31 @@ export const useWeb3 = () => {
 
             const amountInWei = parseEther(`${fee}`);
             
+            // Approve USDC spending first
             const approve_tx = await walletClient.writeContract({
-                address: cUSDTokenAddress,
+                address: USDCTokenAddress,
                 abi: StableTokenABI.abi,
                 functionName: "approve",
                 account: address,
                 args: [LOTTERY_CONTRACT, amountInWei],
-                feeCurrency: cUSDTokenAddress,
+                feeCurrency: USDCAdapterAddress,
+                type: "cip64",
             });
 
-            let approved_receipt = await publicClient.waitForTransactionReceipt({
+            await publicClient.waitForTransactionReceipt({
                 hash: approve_tx,
             });
 
+            // Buy the lottery ticket
             const tx = await walletClient.writeContract({
                 address: LOTTERY_CONTRACT,
                 abi: LotteryFactoryABI.abi,
                 functionName: "buyTicket",
                 account: address,
                 args: [roomId, number],
-                feeCurrency: cUSDTokenAddress,
-            }); 
+                feeCurrency: USDCAdapterAddress,
+                type: "cip64",
+            });
 
             let receipt = await publicClient.waitForTransactionReceipt({
                 hash: tx,
@@ -175,6 +159,8 @@ export const useWeb3 = () => {
             functionName: "claimPrize",
             account: address,
             args: [roomId, ticketId],
+            feeCurrency: USDCAdapterAddress,
+            type: "cip64",
         });
 
         let receipt = await publicClient.waitForTransactionReceipt({
@@ -242,6 +228,8 @@ export const useWeb3 = () => {
             functionName: "updateRoomState",
             account: address,
             args: [roomId],
+            feeCurrency: USDCAdapterAddress,
+            type: "cip64",
         });
 
         let receipt = await publicClient.waitForTransactionReceipt({
@@ -259,7 +247,7 @@ export const useWeb3 = () => {
         });
         
         // Convert from wei to CELO
-        return (Number(balance) / 1e18).toString();
+        return (Number(balance) / DECIMAL_FACTOR).toString();
     };
 
     const getPlayerCount = async (roomId: number, roundNumber: number) => {
@@ -273,7 +261,7 @@ export const useWeb3 = () => {
         return playerCount;
     };
 
-    const isTicketClaimed = async (roomId: number, ticketId: number, roundNumber?: number) => {
+    const isTicketClaimed = async (roomId: number, roundNumber: number, ticketId: number) => {
         try {
             const lotteryContract = getContract({
                 abi: LotteryFactoryABI.abi,
@@ -281,15 +269,8 @@ export const useWeb3 = () => {
                 client: publicClient,
             });
             
-            // If roundNumber is not provided, get it from room details
-            let round = roundNumber;
-            if (round === undefined) {
-                const roomDetails = await lotteryContract.read.getRoomDetails([roomId]);
-                round = Number((roomDetails as any).roundNumber);
-            }
-            
-            // Call the isTicketClaimed function with all required parameters
-            const claimed = await lotteryContract.read.isTicketClaimed([roomId, round, ticketId]);
+            // Call the isTicketClaimed function with parameters in the correct order
+            const claimed = await lotteryContract.read.isTicketClaimed([roomId, roundNumber, ticketId]);
             return claimed;
         } catch (error) {
             console.error("Error checking if ticket is claimed:", error);
@@ -297,10 +278,55 @@ export const useWeb3 = () => {
         }
     };
 
+    // Player statistics functions
+    const getTotalPlayerWins = async (address: string) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        const totalWins = await lotteryContract.read.getTotalPlayerWins([address]);
+        return totalWins;
+    };
+
+    const getTotalPlayerTickets = async (address: string) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        const totalTickets = await lotteryContract.read.getTotalPlayerTickets([address]);
+        return totalTickets;
+    };
+
+    const getPlayerRoomStats = async (roomId: number, address: string) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        // Parameter order in contract is (roomId, address)
+        const roomStats = await lotteryContract.read.getPlayerRoomStats([roomId, address]);
+        return roomStats;
+    };
+
+    const getPlayerCompleteStats = async (address: string) => {
+        const lotteryContract = getContract({
+            abi: LotteryFactoryABI.abi,
+            address: LOTTERY_CONTRACT,
+            client: publicClient,
+        });
+
+        const completeStats = await lotteryContract.read.getPlayerCompleteStats([address]);
+        return completeStats;
+    };
+
     return {
         address,
         getUserAddress,
-        sendCUSD,
         getCELOBalance,
         // Lottery functions
         buyLotteryTicket,
@@ -317,5 +343,10 @@ export const useWeb3 = () => {
         updateRoomState,
         getPlayerCount,
         isTicketClaimed,
+        // Player statistics functions
+        getTotalPlayerWins,
+        getTotalPlayerTickets,
+        getPlayerRoomStats,
+        getPlayerCompleteStats,
     };
 };
