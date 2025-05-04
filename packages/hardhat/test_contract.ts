@@ -103,8 +103,8 @@ async function main() {
       // Calculate draw time (current time + hours)
       const drawTime = Math.floor(Date.now() / 1000) + (config.durationHours * 3600);
       
-      // Convert entry fee to wei (using 6 decimals for cUSD)
-      const entryFeeWei = BigInt(parseFloat(config.entryFee) * 1_000_000);
+      // Convert entry fee to wei (using 18 decimals for ERC-20 tokens)
+      const entryFeeWei = ethers.parseUnits(config.entryFee, 18);
       
       // Use the roundNumber 1 for new rooms
       const roundNumber = 1;
@@ -171,7 +171,7 @@ async function main() {
         // Get room details
         const roomDetails = await lotteryFactoryContract.getRoomDetails(roomId);
         console.log(`Room name: ${roomDetails[1]}`);
-        console.log(`Entry fee: ${Number(roomDetails[3]) / 1_000_000} cUSD`);
+        console.log(`Entry fee: ${ethers.formatUnits(roomDetails[3], 18)} cUSD`);
         console.log(`Draw time: ${new Date(Number(roomDetails[4]) * 1000).toLocaleString()}`);
       } else {
         console.log('Room created but could not find room ID in events');

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Room, RoomState } from "../lottery/types";
 import { Users, Clock } from "lucide-react";
 import Image from "next/image";
@@ -15,6 +15,8 @@ interface BuyTicketPageProps {
 }
 
 const BuyTicketPage = ({ roomInfo, selectedNumber, setSelectedNumber, buyTicket, goBack }: BuyTicketPageProps) => {
+    const [isProcessing, setIsProcessing] = useState(false);
+    
     // Redirect back if the room is not in OPEN state
     useEffect(() => {
         if (roomInfo) {
@@ -85,6 +87,17 @@ const BuyTicketPage = ({ roomInfo, selectedNumber, setSelectedNumber, buyTicket,
                 <div className="w-full h-14"></div>
             </div>
         );
+    };
+
+    const handleBuyTicket = async () => {
+        try {
+            setIsProcessing(true);
+            await buyTicket();
+        } catch (error) {
+            console.error("Transaction failed:", error);
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     if (!roomInfo) {
@@ -172,14 +185,14 @@ const BuyTicketPage = ({ roomInfo, selectedNumber, setSelectedNumber, buyTicket,
                     
                     <button
                         className={`w-full py-3 rounded-lg text-xl font-bold mt-4 max-w-sm ${
-                            selectedNumber !== null
+                            selectedNumber !== null && !isProcessing
                                 ? 'bg-purple-500 hover:bg-purple-600'
                                 : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                         }`}
-                        disabled={selectedNumber === null}
-                        onClick={buyTicket}
+                        disabled={selectedNumber === null || isProcessing}
+                        onClick={handleBuyTicket}
                     >
-                        Buy Ticket for {roomInfo.fee} USDC
+                        {isProcessing ? "Processing..." : `Buy Ticket for ${roomInfo.fee} USDC`}
                     </button>
                 </div>
             </div>

@@ -35,6 +35,13 @@
     "clean": "hardhat clean",
     "run:node": "hardhat node",
     "test": "hardhat test",
-    "prettier": "prettier --write 'contracts/**/*.sol' '**/*.ts'"
+    "prettier": "prettier --write 'contracts/**/*.sol' '**/*.ts'",
+    "create-rooms": "ts-node create_lottery_rooms.ts",
+    "auto-reveal": "ts-node auto_reveal_winning_number.ts",
+    "auto-reset": "ts-node auto_reset_rooms.ts",
+    "reveal-room": "ts-node reveal_winning_number.ts",
+    "reset-room": "ts-node reset_lottery_room.ts",
+    "scheduler:reveal": "node run-reveal.js",
+    "scheduler:reset": "node run-reset.js"
   }
 }
