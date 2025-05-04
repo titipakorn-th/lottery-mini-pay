@@ -4,6 +4,7 @@ import React from "react";
 import { Room, RoomState } from "../lottery/types";
 import { DollarSign, Users, Clock, Star } from "lucide-react";
 import Image from "next/image";
+import { withBasePath } from "@/utils/path";
 
 interface HomePageProps {
     rooms: Room[];
@@ -137,7 +138,7 @@ const HomePage = ({
                                         <h3 className="text-xl font-semibold">{room.name}</h3>
                                         <div className="bg-purple-900 px-3 py-1 rounded-full text-sm flex items-center">
                                             <Image 
-                                                src="/usd-coin-usdc-logo.svg" 
+                                                src={withBasePath("/usd-coin-usdc-logo.svg")} 
                                                 alt="USDC" 
                                                 width={14} 
                                                 height={14} 
@@ -158,7 +159,7 @@ const HomePage = ({
                                     <div className="grid grid-cols-3 gap-2 mt-3 text-sm">
                                         <div className="flex items-center">
                                             <Image 
-                                                src="/usd-coin-usdc-logo.svg" 
+                                                src={withBasePath("/usd-coin-usdc-logo.svg")} 
                                                 alt="USDC" 
                                                 width={16} 
                                                 height={16} 
